@@ -23,7 +23,7 @@ class API(object):
         """
         status = args.split("=")[1]
         jsonObj = None
-        with open("status.json", 'r') as f:
+        with open("status.json", 'r+') as f:
             content = f.read()
             if content == "":
                 jsonObj = []
