@@ -56,6 +56,7 @@ class API(object):
             returnJson = "<h1>Friends Status</h1>"
             for i in jsonObj:
                 tmpsocket = socket(AF_INET,SOCK_STREAM)
+                print("[Visiting]: " + ":".join([i['ip'],i['port']]))
                 tmpsocket.connect((i['ip'],int(i['port'])))
                 tmpsocket.send("GET /api/Status HTTP/1.1\r\n\r\n".encode())
                 tmpresponse = tmpsocket.recv(1024)

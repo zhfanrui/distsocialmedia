@@ -3,10 +3,5 @@
         "name": "Home",
         "ip": "125.237.127.154",
         "port": "8088"
-    },
-    {
-        "name": "Google compute engine",
-        "ip": "35.231.198.205",
-        "port": "8088"
     }
 ]
