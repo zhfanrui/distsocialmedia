@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Update Status</title>
+    <script type="text/javascript">
+        function submit1() {
+            console.log("asd")
+            xmlhttp = new XMLHttpRequest();
+            xmlhttp.onreadystatechange = function(){
+                if(xmlhttp.readyState == XMLHttpRequest.DONE) {
+                    alert(xmlhttp.responseText)
+                }
+            };
+            xmlhttp.open("POST", "./api/Status");
+            xmlhttp.send("status=" + document.getElementById("123").value);
+            // return false;
+        }
+    </script>
+</head>
+<body>
+    <form>
+        <label>Status</label>
+        <input type="text" name="status" id="123">
+        <input type="button" name="" value="Post" onclick="submit1();">
+        <input type="reset" name="" value="Reset">
+    </form>
+
+</body>
+</html>

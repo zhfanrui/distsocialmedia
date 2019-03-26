@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Friends</title>
+    <script type="text/javascript">
+
+        window.onload = function(){
+            xmlhttp = new XMLHttpRequest();
+            xmlhttp.onreadystatechange = function(){
+                if(xmlhttp.readyState == XMLHttpRequest.DONE) {
+                    document.getElementById('main').innerHTML = xmlhttp.responseText
+                }
+            };
+            xmlhttp.open("GET", "./api/FriendsStatus");
+            xmlhttp.send();
+        };
+
+
+        function like(ip, port, timestamps) {
+            xmlhttp = new XMLHttpRequest();
+            xmlhttp.onreadystatechange = function(){
+                if(xmlhttp.readyState == XMLHttpRequest.DONE) {
+                    alert(xmlhttp.responseText)
+                }
+            };
+            xmlhttp.open("POST", "./api/FriendsLike");
+            xmlhttp.send('ip=' + ip + "&port=" + port + "&timestamps=" + timestamps);
+        }
+    </script>
+</head>
+<body>
+    <div id="main"></div>
+
+</body>
+</html>
