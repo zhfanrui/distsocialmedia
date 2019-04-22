@@ -4,7 +4,7 @@
     <title>Update Status</title>
     <script type="text/javascript">
         function submit1() {
-            console.log("asd")
+            // console.log("asd")
             xmlhttp = new XMLHttpRequest();
             xmlhttp.onreadystatechange = function(){
                 if(xmlhttp.readyState == XMLHttpRequest.DONE) {
@@ -18,7 +18,7 @@
     </script>
 </head>
 <body>
-    <form>
+    <form onsubmit="submit1(); return false;">
         <label>Status</label>
         <input type="text" name="status" id="123">
         <input type="button" name="" value="Post" onclick="submit1();">

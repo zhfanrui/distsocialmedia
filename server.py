@@ -2,9 +2,10 @@
 from socket import *
 import os
 import json
-import time
+# import time
 import threading
-import datetime
+import datetime, calendar
+import base64
 
 class API(object):
     """
@@ -17,62 +18,138 @@ class API(object):
     def __init__(self):
         super(API, self).__init__()
 
-    def postStatus(self, args, addr):
+    def postStatus(self, args, addr, cache):
         """
             Change my current status
         """
         status = args.split("=")[1]
         jsonObj = None
-        with open("status.json", 'r+') as f:
+
+        # create status file if it doesn't exist
+        if not os.path.isfile("status.json"):
+            with open("status.json", 'w') as f:
+                pass
+
+        # read status file to get posted status
+        with open("status.json", 'r') as f:
             content = f.read()
             if content == "":
                 jsonObj = []
             else:
                 jsonObj = json.loads(content)
-            tmpobj = {"timestamps": time.time(), "status": status, "like": []}
+
+            # add new status to the json object
+            tmpobj = {"timestamps": calendar.timegm(datetime.datetime.utcnow().timetuple()), "status": status, "like": []}
             jsonObj.append(tmpobj)
+
+        # convert the json object to file
+        # Lock is required
+        writelock.acquire()
         with open("status.json", 'w') as f:
             f.write(json.dumps(jsonObj))
+        writelock.release()
         return "HTTP/1.1 200 OK\r\n\r\nUpdate succeed!"
 
-    def getStatus(self, args, addr):
+    def getStatus(self, args, addr, cache):
         """
-            Get my current status if ip is my friend
+            Test modified time and get my current status and profile image if client is my friend
         """
+
+        # get last modified time from header
+        modifiedTime = cache.split(": ")[1].split(", ")[1]
+        modifiedTime = calendar.timegm(datetime.datetime.strptime(modifiedTime, "%d %b %y %H:%M:%S %Z").timetuple())
+        print("[Modified Time] ", modifiedTime)
         with open("friends.json", 'r') as f:
             jsonObj = json.loads(f.read())
             for i in jsonObj:
                 if i['ip'] == addr[0]:
-                    with open("status.json", 'r') as g:
-                        return "HTTP/1.1 200 OK\r\n\r\n" + g.read()
+
+                    # get files' last modified time
+                    modifiedTimeStatus = calendar.timegm(datetime.datetime.utcfromtimestamp(os.path.getmtime("status.json")).timetuple())
+                    modifiedTimeProfile = calendar.timegm(datetime.datetime.utcfromtimestamp(os.path.getmtime("profile.ico")).timetuple())
+                    print("[status modified time] ", modifiedTimeStatus)
+                    if modifiedTimeStatus > modifiedTime or modifiedTimeProfile > modifiedTime:
+                        with open("status.json", 'r') as g:
+                            with open("profile.ico", "rb") as h:
+                                image64 = base64.b64encode(h.read()).decode("utf-8")
+                                return "HTTP/1.1 200 OK\r\n\r\n" + g.read() + "&" + image64
+                    else:
+                        return "HTTP/1.1 304 Not Modified\r\n\r\n"
         return "HTTP/1.1 401 Unauthorized\r\n\r\n<h1>He or she is not your friend.</h1>"
 
-    def getFriendsStatus(self, args, addr):
+    def getFriendsStatus(self, args, addr, cache):
         """
-            Get all my friends' status
+            Pass modified time and get all my friends' status
         """
+
+        # if no cache, set last modified time to timestamps 0
+        modifiedTime = datetime.datetime.utcfromtimestamp(0).strftime('%a, %d %b %y %H:%M:%S GMT') if cache == "" else cache.split(": ")[1]
+
+        returnJson = ""
+
+        # if full text need to be responded or not
+        returnAllTextFlag = 0
         with open("friends.json", 'r') as f:
             jsonObj = json.loads(f.read())
-            returnJson = "<h1>Friends Status</h1>"
             for i in jsonObj:
-                tmpsocket = socket(AF_INET,SOCK_STREAM)
-                print("[Visiting]: " + ":".join([i['ip'],i['port']]))
-                tmpsocket.connect((i['ip'],int(i['port'])))
-                tmpsocket.send("GET /api/Status HTTP/1.1\r\n\r\n".encode())
-                tmpresponse = tmpsocket.recv(1024)
-                headers = tmpresponse.decode("utf-8").split("\r\n")
-                httpStatusCode =headers[0].split(" ")[1]
-                if httpStatusCode == "200":
-                    jsonObj = json.loads(headers[-1])
-                    returnJson += "<h2>" + i['name'] + "</h2><ul><li>" + datetime.datetime.fromtimestamp(jsonObj[-1]['timestamps']).strftime('%Y-%m-%d %H:%M:%S') + "</li><li>" + jsonObj[-1]['status'] + "</li><li><button onclick=\"like(\'" + i['ip'] + "\'," + i['port'] + "," + str(jsonObj[-1]['timestamps']) + ");\">Like</button></li><li>"
-                    for j in jsonObj[-1]['like']:
-                        returnJson += j + ", "
-                    returnJson += "</li>"
-                else:
-                    return tmpresponse + "<p>ip: " + i['ip'] + "</p>"
-            return "HTTP/1.1 200 OK\r\n\r\n" + returnJson
 
-    def postLike(self, args, addr):
+                # create a client socket to request status with If-Modified-Since header
+                tmpsocket = socket(AF_INET,SOCK_STREAM)
+                tmpresponse = b""
+                headers = []
+                httpStatusCode = 0
+
+                # handle bad connection
+                try:
+                    tmpsocket.connect((i['ip'],int(i['port'])))
+                    tmpsocket.send(("GET /api/Status HTTP/1.1\r\nIf-Modified-Since: " + modifiedTime + "\r\n\r\n").encode())
+                    while True:
+                        stream = tmpsocket.recv(1024)
+                        if len(stream) > 0:
+                            tmpresponse += stream
+                        else:
+                            break
+
+                except:
+                    # create a fake response if friend's server is off-line
+                    tmpresponse = "HTTP/1.1 503 Service Unavailable\r\n\r\n".encode()
+
+                headers = tmpresponse.decode("utf-8").split("\r\n")
+                httpStatusCode = headers[0].split(" ")[1]
+
+                # If httpStatusCode is 200, the status has been changed since last modified time. So, new html need to be responded.
+                if httpStatusCode == "200":
+
+                    returnAllTextFlag = 1
+
+                    # backup status and image
+                    with open("tmp/"+i['ip']+"_"+i['port'], 'w') as f:
+                        f.write(headers[-1])
+
+                # If httpStatusCode is 304, my friend i didn't change the status. And read the status from server cache.
+                # If httpStatusCode is 503, my friend i didn't on-line. And read the status from server cache.
+                elif httpStatusCode == "304" or httpStatusCode == "503":
+                    with open("tmp/"+i['ip']+"_"+i['port'], 'r') as f:
+                        headers = [f.read()]
+
+                else:
+                    # return an 401 error response immediately because there is some problem with friends.json
+                    return tmpresponse + "<p>ip: " + i['ip'] + "</p>"
+
+                # generate html code (it should be better to return a json format)
+                statusAndImage = headers[-1].split("&")
+                jsonObj = json.loads(statusAndImage[0])
+                returnJson += "<h2>" + i['name'] + "</h2><ul><li><img src=\"data:image/ico;base64," + statusAndImage[1] + "\"</li><li>" + datetime.datetime.fromtimestamp(jsonObj[-1]['timestamps']).strftime('%Y-%m-%d %H:%M:%S') + "</li><li>" + jsonObj[-1]['status'] + "</li><li><button onclick=\"like(\'" + i['ip'] + "\'," + i['port'] + "," + str(jsonObj[-1]['timestamps']) + ");\">Like</button></li><li>"
+                returnJson += str(len(jsonObj[-1]['like'])) + " likes: "
+                returnJson += ", ".join(jsonObj[-1]['like'])
+                returnJson += "</li>"
+
+            if returnAllTextFlag:
+                return "HTTP/1.1 200 OK\r\n\r\n" + returnJson
+            else:
+                return "HTTP/1.1 304 Not Modified\r\n\r\n"
+
+    def postLike(self, args, addr, cache):
         """
             Add my status a like
         """
@@ -80,22 +157,28 @@ class API(object):
         with open("friends.json", 'r') as f:
             jsonObj = json.loads(f.read())
             for i in jsonObj:
+                # check client is my friend or not
                 if i['ip'] == addr[0]:
                     jsonObj2 = None
                     with open("status.json", 'r') as g:
                         jsonObj2 = json.loads(g.read())
                         for j in jsonObj2:
+                            # write ip address to certain status
                             if args == str(j['timestamps']):
+                                # check duplication
                                 if addr[0] in j['like']:
                                     return "HTTP/1.1 200 OK\r\n\r\nYou have already liked."
                                 else:
                                     j['like'].append(addr[0])
+                    # write-lock is required
+                    writelock.acquire()
                     with open("status.json", 'w') as g:
                         g.write(json.dumps(jsonObj2))
-                    return "HTTP/1.1 200 OK\r\n\r\nSucceed! Please Refresh."
+                    writelock.release()
+                    return "HTTP/1.1 200 OK\r\n\r\nSucceed!"
         return "HTTP/1.1 401 Unauthorized\r\n\r\nFailed! He or she is not your friend."
 
-    def postFriendsLike(self, args, addr):
+    def postFriendsLike(self, args, addr, cache):
         """
             Add friends' status a like
         """
@@ -109,8 +192,8 @@ class API(object):
         if httpStatusCode == "200":
             return tmpresponse.decode()
         else:
+            # handle invalid friends
             return tmpresponse + "<p>ip: " + i['ip'] + "</p>"
-
 
 
 def httpLink(connectionSocket, addr):
@@ -125,7 +208,15 @@ def httpLink(connectionSocket, addr):
     headers = request.decode("utf-8").split("\r\n")
     method = headers[0].split(" ")[0].lower()
     filename = headers[0].split(" ")[1]
-    print(headers)
+
+    # Get If-Modified-Since in the header
+    modifiedTime = ""
+    for i in headers:
+        if i.startswith("If-Modified-Since"):
+            modifiedTime = i
+            break
+    print("[header] ", headers[0])
+    print("[ModifiedTime] ", modifiedTime)
 
     # if requests is api
     if "/api/" in filename:
@@ -136,64 +227,83 @@ def httpLink(connectionSocket, addr):
         elif method == 'post':
             action = method + filename.split('/')[-1]
             args = headers[-1]
-        result = getattr(api, action)(args, addr)
-        # print(result)
+        result = getattr(api, action)(args, addr, modifiedTime)
+        # print("[return] ", result)
         connectionSocket.send(result.encode())
         # Close the connection
         connectionSocket.close()
         return
 
     # if requests is root page
-    elif filename[-1] == "/":
-        filename = filename + "update.html"
+    if filename == "/":
+        filename = "/update.html"
 
-    # if requests is normal files
-    # if file not found return 404
-    if not os.path.isfile("." + filename):
-        connectionSocket.send("HTTP/1.1 404 Not Found\r\n\r\n".encode())
+    # access the friends.html
+    if filename == "/friends.html":
+        # generate dynamic friends.html first
+        result = getattr(api, "getFriendsStatus")("", addr, modifiedTime).split("\r\n\r\n")
+        # if something changed, i.e. return the page content with Last-Modified header
+        if result[0] == "HTTP/1.1 200 OK":
+            filecontent = ""
+            # open template file
+            with open("friends.template", "r") as f:
+                filecontent = f.read().replace("{{data}}", result[1])
+            nowTimeStr = datetime.datetime.utcnow().strftime("%a, %d %b %y %H:%M:%S GMT")
+            connectionSocket.send(("HTTP/1.1 200 OK\r\nLast-Modified: " + nowTimeStr + " \r\n\r\n").encode())
 
-    # if file found return 200
-    else:
+            connectionSocket.send(filecontent.encode())
+
+        # if nothing changed, i.e. return 304 header
+        else:
+            connectionSocket.send("\r\n\r\n".join(result).encode())
+    # handle /update.html
+    elif filename == "/update.html":
         connectionSocket.send("HTTP/1.1 200 OK\r\n\r\n".encode())
 
-        # return the file contents especially for image format and text/html format
+        # return the file contents
         filecontent = None
-        if filename.endswith(".jpg") or filename.endswith(".jpge") or filename.endswith(".png") or filename.endswith(".gif"):
-            with open("." + filename, "rb") as f:
-                filecontent = f.read()
-        else:
-            with open("." + filename, "r") as f:
-                filecontent = f.read().encode()
+        with open("." + filename, "r") as f:
+            filecontent = f.read().encode()
 
         connectionSocket.send(filecontent)
+    # other file is invalid for security concern
+    else:
+        connectionSocket.send("HTTP/1.1 404 Not Found\r\n\r\n".encode())
 
     # Close the connection
     connectionSocket.close()
 
-# Create a single instance of API
-api = API()
+def main():
+    # Listening port for the server
+    serverPort = 8080
 
-# Listening port for the server
-serverPort = 8088
+    # Create the server socket object
+    serverSocket = socket(AF_INET,SOCK_STREAM)
 
-# Create the server socket object
-serverSocket = socket(AF_INET,SOCK_STREAM)
+    # Bind the server socket to the port
+    serverSocket.bind(('',serverPort))
 
-# Bind the server socket to the port
-serverSocket.bind(('',serverPort))
+    # Start listening for new connections
+    serverSocket.listen(5)
 
-# Start listening for new connections
-serverSocket.listen(5)
-
-print('The server is ready to receive messages')
+    print('The server is ready to receive messages')
 
 
-while 1:
-    # Accept a connection from a client
-    sock, addr = serverSocket.accept()
-    print(addr)
-    # Create a new thread for a client
-    t = threading.Thread(target=httpLink, args=(sock, addr))
-    t.start()
+    while 1:
+        # Accept a connection from a client
+        sock, addr = serverSocket.accept()
+        # print(addr)
+        # Create a new thread for a client
+        t = threading.Thread(target=httpLink, args=(sock, addr))
+        t.start()
 
+if __name__ == '__main__':
 
+    # Create a single instance of API
+    api = API()
+
+    # Create a write-lock
+    writelock = threading.Lock()
+
+    # Run main function
+    main()
