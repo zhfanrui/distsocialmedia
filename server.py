@@ -275,7 +275,7 @@ def httpLink(connectionSocket, addr):
 
 def main():
     # Listening port for the server
-    serverPort = 8080
+    serverPort = 8088
 
     # Create the server socket object
     serverSocket = socket(AF_INET,SOCK_STREAM)
